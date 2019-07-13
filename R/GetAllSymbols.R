@@ -1,4 +1,4 @@
-hostname <- "http://client2.nadpco.com/"
+newDataHostName = "http://newdata2.nadpco.com/"
 #TODO
 #پارامترهایی که در ابتدای کار باید گرفته شوند
 # Host
@@ -20,83 +20,44 @@ library(httr)
 library(jsonlite)
 
 #گرفتن لیست شرکت ها
-GetMarketCompaniesUrl = paste(hostname, "NadpcoClient/GetMarketCompanies", sep = "")
-GetMarketCompaniesResult <- GET(GetMarketCompaniesUrl, encode = "json")
-GetMarketCompaniesParsed = content(GetMarketCompaniesResult, "parsed", encoding = "utf-8")
-Noavaran.Companies <- fromJSON(GetMarketCompaniesParsed, flatten = TRUE)
-#View(Noavaran.Companies)
+GetMarketCompaniesUrl = paste(newDataHostName,
+                              "api/v3/Signal/Signal?SpName=GetMarketCompanies",
+                              sep = "")
+GetMarketCompaniesResult = GET(GetMarketCompaniesUrl, encode = "json")
+GetMarketCompaniesParsed = content(GetMarketCompaniesResult, "text", encoding = "utf-8")
+Noavaran.Companies = fromJSON(GetMarketCompaniesParsed, flatten = TRUE)
+colnames(Noavaran.Companies) = c('Com_ID',
+                                 'Com_BourseSymbol',
+                                 'Com_Symbol',
+                                 'FirstPublicSupplyDate')
 
-#خواندن پارامترهای لازم از رجیستری
-fr <- readRegistry("Software\\Wow6432Node\\NoavaranAmin\\NadpcoClient" , hive = c("HLM", "HCR", "HCU", "HU", "HCC", "HPD"),
-                   maxdepth = 10, view = c("default", "32-bit", "64-bit"))
+# GetDataForAllSymbolsUrl = paste(newDataHostName,"api/v3/Signal/Signal?SpName=GetDataForAllSymbols", sep = "")
+# GetDataForAllSymbolsResult = GET(GetDataForAllSymbolsUrl, encode = "json")
+# GetDataForAllSymbolsParsed = content(GetDataForAllSymbolsResult, "text", encoding = "utf-8")
+# GetDataForAllSymbolsJsonResult = fromJSON(GetDataForAllSymbolsParsed, flatten = TRUE)
 
-#گرفتن توکن
-parameters <- list(
-  SerialNumber = fr[1][[1]],
-  Ticket = fr[2][[1]]
-)
+GetDataForAllSymbolsJsonResult = fromJSON(content(GET(paste(newDataHostName,"api/v3/Signal/Signal?SpName=GetDataForAllSymbols", sep = ""), encode = "json", add_headers(accept = "text//csv")), "text", encoding = "utf-8"), flatten = TRUE)
+colnames(GetDataForAllSymbolsJsonResult) = c('Com_ID',
+                                             'Date',
+                                             'JalaliDate',
+                                             'Open',
+                                             'High',
+                                             'Low',
+                                             'Close',
+                                             'Volume',
+                                             'Value')
 
-CreateMemberToken2Url = paste(hostname, "NadpcoClient/CreateMemberToken2", sep = "")
-CreateMemberToken2result <- POST(CreateMemberToken2Url,body = parameters, encode = "json")
-#CreateMemberToken2result
+groupedByComId = split.data.frame(GetDataForAllSymbolsJsonResult, GetDataForAllSymbolsJsonResult$Com_ID)
 
-CreateMemberToken2parsed = content(CreateMemberToken2result, "text", encoding = "utf-8")
+for (i in 1:length(groupedByComId)) {
+  row = groupedByComId[[i]]
 
-CreateMemberToken2jsonresult <- fromJSON(CreateMemberToken2parsed, flatten = TRUE)
+  Com_Symbol = Noavaran.Companies[Noavaran.Companies$Com_ID == row$Com_ID[1], ]$Com_Symbol
+  dataframeName = paste("Noavaran.Symbols.", Com_Symbol, sep = "")
 
-MemberToken = CreateMemberToken2jsonresult[["MemberToken"]]
-tok = MemberToken[["MemT_ProtectedTicket"]]
-#tok
+  row = row[ , !(names(row) %in% c('Com_ID'))]
+  row$Date = as.Date(row$Date)
+  rownames(row) <- NULL
 
-auth_token = paste("token:",tok, sep= "")
-
-parameters <- list()
-today <- format(Sys.Date(), "%Y/%m/%d")
-for(i in 1:nrow(Noavaran.Companies)) {
-  row <- Noavaran.Companies[i,]
-  parameters[[length(parameters)+1]] <- list(ComIds = row$Com_ID,FromDate = "2000/12/01",ToDate = today,ShowAllDays = F,Adjusted = F,AdjustmentType = 1,TimeInterval = "d")
+  assign(dataframeName, row)
 }
-
-GetNadpcoClientDifferentialDataForAllSymbolsUrl = paste(hostname, "NadpcoClient/GetNadpcoClientDifferentialDataForAllSymbols", sep = "")
-GetNadpcoClientDifferentialDataForAllSymbolsResult <- POST(GetNadpcoClientDifferentialDataForAllSymbolsUrl,add_headers(auth_token = auth_token), body = parameters, encode = "json")
-#GetNadpcoClientDifferentialDataForAllSymbolsResult
-
-GetNadpcoClientDifferentialDataForAllSymbolsParsed = content(GetNadpcoClientDifferentialDataForAllSymbolsResult, "text", encoding = "utf-8")
-
-GetNadpcoClientDifferentialDataForAllSymbolsJsonResult <- fromJSON(GetNadpcoClientDifferentialDataForAllSymbolsParsed, flatten = TRUE)
-colnames(GetNadpcoClientDifferentialDataForAllSymbolsJsonResult)[1] <- "Com_ID"
-
-merged <- merge(x = Noavaran.Companies, y = GetNadpcoClientDifferentialDataForAllSymbolsJsonResult, by = "Com_ID", all = TRUE)
-#View(merged)
-
-#تبدیل به دیتافریم های مختلف
-symbolVector <- NULL
-
-for(i in 1:nrow(merged)) {
-  row <- merged[i,]
-  #print(row$Com_Symbol)
-  #print(row[,"NadpcoClientDataViews"])
-  #print(is.na(row[,"NadpcoClientDataViews"]))
-
-  if (!is.na(row[,"NadpcoClientDataViews"])) {
-    dataframeName <- paste("Noavaran.Symbols.", row$Com_Symbol, sep = "")
-
-    Date <-    as.Date(row[,"NadpcoClientDataViews"][[1]]['PKDate'][1,1][[1]])
-    Open <-    row[,'NadpcoClientDataViews'][[1]]['ComC_PriceFirst'][1,1][[1]]
-    High <-    row[,'NadpcoClientDataViews'][[1]]['ComC_PriceMax'][1,1][[1]]
-    Low <-     row[,'NadpcoClientDataViews'][[1]]['ComC_PriceMin'][1,1][[1]]
-    Close <-   row[,'NadpcoClientDataViews'][[1]]['ComC_PriceLast'][1,1][[1]]
-    Volume <-  row[,'NadpcoClientDataViews'][[1]]['ComC_Volume'][1,1][[1]]
-
-    df <- cbind.data.frame(Date, Open, High, Low, Close, Volume)
-
-    assign(dataframeName, df)
-
-    symbolVector <- c(symbolVector, dataframeName)
-  } else {
-    print(row$Com_Symbol)
-  }
-}
-
-#ذخیره در فایل
-#dump(symbolVector, "Symbols.txt")
